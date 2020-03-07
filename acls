@@ -1,0 +1,252 @@
+#!/usr/bin/env python
+"""
+There are no decent utilities to easily get an overview of the ACLs that
+are applied and effective within a SpectrumScale file system, nor any
+other file system really.  The ACL utilities are all single file based,
+which they need to be, but sometimes you just need more.  Hence, acls,
+an easy way to view the ACLs.
+
+The source for this is publicly available on github:
+    https://github.com/ckerner/acls.git
+
+Chad Kerner, Senior Storage Engineer
+Storage Enabling Technologies
+National Center for Supercomputing Applications
+University of Illinois, Urbana-Champaign
+ckerner@illinois.edu      chad.kerner@gmail.com
+
+There is NO support, use it at your own risk.  Although I have not coded
+anything too awfully dramatic in here.
+
+If you find a bug, fix it.  Then send me the diff and I will merge it into
+the code.
+"""
+
+from __future__ import print_function
+import sys
+import os
+import stat
+from lperms import *
+from subprocess import Popen, PIPE
+import pprint
+import shlex
+import datetime
+
+"""
+ACL Dictionary Structure:
+    acl[FQPN]   - Fully qualified pathname of the file.
+    acl[TYPE]   - f for file and D for directories
+    acl[OWNER]  - Owner of the file
+    acl[GROUP]  - Group of the file
+    acl[USERP]  - User permissions
+    acl[GROUPP] - Group permissions
+    acl[OTHERP] - Other permissions
+    acl[MASK]   - File mask
+    acl[USERS]
+       [USER]
+            [PERMS]
+            [EFFECTIVE]
+    acl[GROUPS]
+       [GROUP]
+            [PERMS]
+            [EFFECTIVE]
+"""
+
+def parse_options( argv ):
+    """
+    This function handles the parsing of the command line arguments.
+
+    Args:
+      argv: A list of command line arguments, passed in from sys.argv
+
+    Returns
+      options: A dictionary of the command line option settings
+      args   : A list of files
+
+    """
+
+    import argparse
+    import textwrap
+    parser = argparse.ArgumentParser(
+           formatter_class = argparse.RawTextHelpFormatter,
+           prog = 'acls',
+           description = textwrap.dedent('''\
+                acls - List ACLs In SpectrumScale
+
+                This utility will allow you to easily view the ACLs on files
+                and directories within IBM SpectrumScale.
+
+           '''),
+
+           epilog = textwrap.dedent('''\
+
+                Usage Examples:
+
+                - List the ACLs on a file
+                > acls <FILE> <FILE> <DIR>
+
+                NOTE: This CLI requires IBM SpectrumScale to be installed in the default location.
+
+                Chad Kerner, Senior Storage Engineer
+                Storage Enabling Technologies
+                National Center for Supercomputing Applications
+                University of Illinois, Urbana-Champaign
+                ckerner@illinois.edu      chad.kerner@gmail.com''')
+           )
+
+    parser.add_argument( "-d", "--default",
+                         dest = "default",
+                         default = False,
+                         action = 'store_true',
+                         help = "Display the default ACL on directories. Default: %(default)s")
+
+    parser.add_argument( "-v", "--verbose",
+                         dest = "verbose",
+                         default = False,
+                         action = 'store_true',
+                         help = "Execute in verbose mode. Default: %(default)s")
+
+    parser.add_argument( "--debug",
+                         dest = "debug",
+                         default = False,
+                         action = 'store_true',
+                         help = "Execute in debug mode. This is pretty verbose. Default: %(default)s")
+
+    options, args = parser.parse_known_args( argv )
+    return ( options, args )
+
+def get_os_stat( pathname ):
+    if options.debug:
+       print( "Trace: %s" % ( sys._getframe().f_code.co_name ) )
+
+    try:
+       mystat = os.stat( pathname )
+       mode = mystat.st_mode
+    except:
+       mystat = None
+       if not options.debug:
+          print("Broken Link: %s " % ( pathname ) )
+    return mystat
+
+def run_cmd( cmdstr=None ):
+    """
+    Wrapper around subprocess module calls.
+
+    :param: A string containing the command to run.
+    :return: The text output of the command.
+    """
+    if not cmdstr:
+       return None
+    cmd = shlex.split(cmdstr)
+    subp = Popen(cmd, stdout=PIPE, stderr=PIPE)
+    (outdata, errdata) = subp.communicate()
+    if subp.returncode != 0:
+       msg = "Error\n Command: {0}\n Message: {1}".format(cmdstr,errdata)
+       raise UserWarning( msg )
+       exit( subp.returncode )
+    return( outdata )
+
+
+def get_acl( fileName ):
+    """
+    Fetch the file ACLs and return them in a dict.
+
+    :param fnam: The name of the file or directory to get the ACLs on.
+    :return: Returns a dict with the ACL information.
+    """
+
+    mydict = {}
+    mydict['GROUPS'] = {}
+    mydict['USERS'] = {}
+    mydict['FQPN'] = fileName
+    mydict['DIRNAME'] = fileName
+    mydict['MASK'] = '----'
+
+    cmd = '/usr/lpp/mmfs/bin/mmgetacl ' + '"' + fileName + '"'
+    output = run_cmd( cmd )
+
+    for line in output.splitlines():
+        if '#owner:' in line:
+           mydict['OWNER'] = line.split(':')[1]
+        elif '#group:' in line:
+           mydict['GROUP'] = line.split(':')[1]
+        elif line.startswith('user:'):
+           if line.split(':')[1] == '':
+              mydict['USERP'] = line.split(':')[2]
+           else:
+              user_name=line.split(':')[1]
+              mydict['USERS'][user_name] = {}
+              mydict['USERS'][user_name]['PERMS']=line.split(':')[2][0:4]
+              if 'effective' in line:
+                 mydict['USERS'][user_name]['EFFECTIVE']=line.split(':')[3][1:5]
+              else:
+                 mydict['USERS'][user_name]['EFFECTIVE']='????'
+        elif line.startswith('group:'):
+           if line.split(':')[1] == '':
+              if 'effective' in line:
+                 mydict['GROUPP'] = line.split(':')[2][0:4]
+                 mydict['GROUPE'] = line.split(':')[3][1:5]
+              else:
+                 mydict['GROUPP'] = line.split(':')[2]
+                 mydict['GROUPE'] = line.split(':')[2]
+           else:
+              group_name=line.split(':')[1]
+              mydict['GROUPS'][group_name] = {}
+              mydict['GROUPS'][group_name]['PERMS']=line.split(':')[2][0:4]
+              if 'effective' in line:
+                 mydict['GROUPS'][group_name]['EFFECTIVE']=line.split(':')[3][1:5]
+              else:
+                 mydict['GROUPS'][group_name]['EFFECTIVE']='????'
+        elif 'other::' in line:
+           mydict['OTHERP'] = line.split(':')[2]
+        elif 'mask::' in line:
+           mydict['MASK'] = line.split(':')[2]
+
+    return mydict
+
+
+if __name__ == '__main__':
+   ( options, args ) = parse_options( sys.argv[1:] )
+
+   # See if any files were listed. If not, default to the current directory
+   if len(args) >= 1:
+      for fileName in args:
+          print(fileName)
+   else:
+      currentDirectory = os.getcwd()
+      print( "Directory: %s" % ( currentDirectory ) )
+
+      if options.default:
+         print("Dump Default ACL")
+
+      print("%-10s %4s %-8s %-8s %4s %4s %4s %4s %4s %-19s %s" % ( 'Permissions', 'Mode', 'Owner', 'Group', 'USER', 'GRUP', 'GEFF', 'OTHR', 'MASK', 'Modification Time', 'Filename' ) )
+      for fileName in sorted( os.listdir( currentDirectory ), key=str.lower ):
+          # Lets fully qualify the pathname to the file
+          pathName = os.path.join( currentDirectory, fileName )
+
+          # Get the stat information
+          mystat = get_os_stat( pathName )
+
+          # Extract the file mode and convert it to a string representation
+          octalPerms = str( oct( mystat.st_mode )[-4:] )
+          permString = 'd' if stat.S_ISDIR( mystat.st_mode ) else '-'
+          permString += get_permission_string( octalPerms )
+
+          myAcl = get_acl( pathName )
+          #print(myAcl)
+          #print
+
+          # If there is an ACL, append a + to the perm string
+          if len(myAcl['USERS'].keys()) > 0 or len(myAcl['GROUPS'].keys()) > 0:
+             permString += '+'
+          else:
+             permString += ' '
+
+          # Convert the stat modification time to a readable timestamp
+          timeStamp = datetime.datetime.fromtimestamp(mystat.st_mtime).strftime('%Y-%m-%d-%H:%M:%S')
+
+          # Print the main file line
+          print("%s %s %-8s %-8s %4s %4s %4s %4s %4s %19s %s" % ( permString, octalPerms, myAcl['OWNER'], myAcl['GROUP'], myAcl['USERP'], myAcl['GROUPP'], myAcl['GROUPE'], myAcl['OTHERP'], myAcl['MASK'], timeStamp, fileName ) )
+
+
+
