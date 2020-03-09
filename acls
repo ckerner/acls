@@ -220,10 +220,13 @@ if __name__ == '__main__':
       currentDirectory = os.getcwd()
       print( "Directory: %s" % ( currentDirectory ) )
 
+      # Do we print the default ACL?
       if options.default:
 
          cmd = '/usr/lpp/mmfs/bin/mmgetacl -d ' + '"' + currentDirectory + '"'
          output = run_cmd( cmd )
+
+         # If there is an ACL, there will be more output than 3 lines of ACL data.
          if len( output.split( '\n' ) ) > 3:
             print( "Default ACL:" )
             print( "%-11s %4s %-8s %-8s %4s %4s %4s %4s %4s %-19s %s" % ( 'Permissions', 'Mode', 'Owner', 'Group',
