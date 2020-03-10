@@ -25,6 +25,7 @@ the code.
 from __future__ import print_function
 import sys
 import os
+from os import *
 import stat
 from subprocess import Popen, PIPE
 import pprint
@@ -144,6 +145,9 @@ def run_cmd( cmdstr=None ):
     """
     if not cmdstr:
        return None
+
+    if options.debug:
+       print( "Executing: %s" % ( cmdstr ) )
     cmd = shlex.split( cmdstr )
     subp = Popen( cmd, stdout=PIPE, stderr=PIPE )
     ( outdata, errdata ) = subp.communicate()
@@ -154,7 +158,7 @@ def run_cmd( cmdstr=None ):
     return( outdata )
 
 
-def parse_acl( output ):
+def parse_acl( fqpn, output ):
     """
     Fetch the file ACLs and return them in a dict.
 
@@ -165,8 +169,8 @@ def parse_acl( output ):
     mydict = {}
     mydict['GROUPS'] = {}
     mydict['USERS'] = {}
-    mydict['FQPN'] = fileName
-    mydict['DIRNAME'] = fileName
+    mydict['FQPN'] = fqpn
+    mydict['DIRNAME'] = fqpn
     mydict['MASK'] = '----'
 
     for line in output.splitlines():
@@ -184,7 +188,8 @@ def parse_acl( output ):
               if 'effective' in line:
                  mydict['USERS'][user_name]['EFFECTIVE'] = line.split( ':' )[3][1:5]
               else:
-                 mydict['USERS'][user_name]['EFFECTIVE'] = '????'
+                 mydict['USERS'][user_name]['EFFECTIVE'] = mydict['USERS'][user_name]['PERMS']
+                 #mydict['USERS'][user_name]['EFFECTIVE'] = '????'
         elif line.startswith( 'group:' ):
            if line.split( ':' )[1] == '':
               if 'effective' in line:
@@ -200,17 +205,25 @@ def parse_acl( output ):
               if 'effective' in line:
                  mydict['GROUPS'][group_name]['EFFECTIVE'] = line.split( ':' )[3][1:5]
               else:
-                 mydict['GROUPS'][group_name]['EFFECTIVE'] = '????'
+                 mydict['GROUPS'][group_name]['EFFECTIVE'] = mydict['GROUPS'][group_name]['PERMS']
+                 #mydict['GROUPS'][group_name]['EFFECTIVE'] = '????'
         elif 'other::' in line:
            mydict['OTHERP'] = line.split( ':' )[2]
         elif 'mask::' in line:
            mydict['MASK'] = line.split( ':' )[2]
 
+    if options.debug:
+       print( mydict )
+
     return mydict
 
+
 def print_line( p01, p02, p03, p04, p05, p06, p07, p08, p09, p10, p11 ):
+    """
+    Created a standard print line so there is only one place to make formatting changes.
+    """
     print( "%-11s %4s %-8s %-8s %4s %4s %4s %4s %4s %-19s %s" % ( p01, p02, p03, p04, p05, p06, p07, p08, p09, p10, p11 ) )
-    return 
+    return
 
 
 if __name__ == '__main__':
@@ -226,6 +239,15 @@ if __name__ == '__main__':
 
       # Do we print the default ACL?
       if options.default:
+         # Get the stat information
+         mystat = get_os_stat( currentDirectory )
+
+         # If its a directory, it starts with a d.
+         permString = 'd' if stat.S_ISDIR( mystat.st_mode ) else '-'
+
+         # Extract the file mode and convert it to a string representation
+         octalPerms = str( oct( mystat.st_mode )[-4:] )
+         permString += get_permission_string( octalPerms )
 
          cmd = '/usr/lpp/mmfs/bin/mmgetacl -d ' + '"' + currentDirectory + '"'
          output = run_cmd( cmd )
@@ -234,8 +256,36 @@ if __name__ == '__main__':
          if len( output.split( '\n' ) ) > 3:
             print( "Default ACL:" )
             print_line( 'Permissions', 'Mode', 'Owner', 'Group', 'USER', 'GRUP', 'GEFF', 'OTHR', 'MASK', 'Modification Time', 'Filename' )
-            myAcl = parse_acl( output )
-            print( myAcl )
+            myAcl = parse_acl( currentDirectory, output )
+
+            # If there is an ACL, append a + to the perm string
+            if len( myAcl['USERS'].keys() ) > 0 or len( myAcl['GROUPS'].keys() ) > 0:
+               permString += '+'
+            else:
+               permString += ' '
+
+            # Convert the stat modification time to a readable timestamp
+            timeStamp = datetime.datetime.fromtimestamp( mystat.st_mtime ).strftime( '%Y-%m-%d %H:%M:%S' )
+
+            # Print the main file line
+            print_line( permString, octalPerms, myAcl['OWNER'], myAcl['GROUP'],
+                        myAcl['USERP'], myAcl['GROUPP'], myAcl['GROUPE'], myAcl['OTHERP'],
+                        myAcl['MASK'], timeStamp, currentDirectory )
+
+            # Process any user based ACLs
+            if len( myAcl['USERS'].keys() ) > 0:
+               for user in sorted( myAcl['USERS'].keys(), key=str.lower ):
+                   print_line( '', '', '', '', myAcl['USERS'][user]['PERMS'],
+                             '', '', '', myAcl['USERS'][user]['EFFECTIVE'], user, '' )
+
+            # Process any group based ACLs
+            if len( myAcl['GROUPS'].keys() ) > 0:
+               for group in sorted( myAcl['GROUPS'].keys(), key=str.lower ):
+                   print_line( '', '', '', '', '', myAcl['GROUPS'][group]['PERMS'],
+                               '', '', myAcl['GROUPS'][group]['EFFECTIVE'], group, '' )
+
+            # Print a nice separator line
+            print('')
          else:
             print( "Default ACL: None Configured" )
 
@@ -259,9 +309,10 @@ if __name__ == '__main__':
           octalPerms = str( oct( mystat.st_mode )[-4:] )
           permString += get_permission_string( octalPerms )
 
-          cmd = '/usr/lpp/mmfs/bin/mmgetacl ' + '"' + fileName + '"'
+          #cmd = '/usr/lpp/mmfs/bin/mmgetacl ' + '"' + fileName + '"'
+          cmd = '/usr/lpp/mmfs/bin/mmgetacl ' + '"' + pathName + '"'
           output = run_cmd( cmd )
-          myAcl = parse_acl( output )
+          myAcl = parse_acl( pathName, output )
 
           # If there is an ACL, append a + to the perm string
           if len( myAcl['USERS'].keys() ) > 0 or len( myAcl['GROUPS'].keys() ) > 0:
@@ -270,7 +321,7 @@ if __name__ == '__main__':
              permString += ' '
 
           # Convert the stat modification time to a readable timestamp
-          timeStamp = datetime.datetime.fromtimestamp( mystat.st_mtime ).strftime( '%Y-%m-%d-%H:%M:%S' )
+          timeStamp = datetime.datetime.fromtimestamp( mystat.st_mtime ).strftime( '%Y-%m-%d %H:%M:%S' )
 
           # Print the main file line
           print_line( permString, octalPerms, myAcl['OWNER'], myAcl['GROUP'],
