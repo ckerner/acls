@@ -106,6 +106,12 @@ def parse_options( argv ):
                          action = 'store_true',
                          help = "Display the default ACL on directories. Default: %(default)s")
 
+    parser.add_argument( "-r", "--recurse",
+                         dest = "recurse",
+                         default = False,
+                         action = 'store_true',
+                         help = "Recurse down one level if a directory is specified. Default: %(default)s")
+
     parser.add_argument( "-v", "--verbose",
                          dest = "verbose",
                          default = False,
@@ -123,12 +129,14 @@ def parse_options( argv ):
 
 
 def get_os_stat( pathname ):
+    """
+    Get the stat information.
+    """
     if options.debug:
        print( "Trace: %s" % ( sys._getframe().f_code.co_name ) )
 
     try:
        mystat = os.stat( pathname )
-       mode = mystat.st_mode
     except:
        mystat = None
        if not options.debug:
@@ -148,13 +156,19 @@ def run_cmd( cmdstr=None ):
 
     if options.debug:
        print( "Executing: %s" % ( cmdstr ) )
+
+    # Split the command string into a list
     cmd = shlex.split( cmdstr )
+
+    # Process the command
     subp = Popen( cmd, stdout=PIPE, stderr=PIPE )
     ( outdata, errdata ) = subp.communicate()
+
     if subp.returncode != 0:
        msg = "Error\n Command: {0}\n Message: {1}".format( cmdstr, errdata )
        raise UserWarning( msg )
        exit( subp.returncode )
+
     return( outdata )
 
 
@@ -225,6 +239,95 @@ def print_line( p01, p02, p03, p04, p05, p06, p07, p08, p09, p10, p11 ):
     print( "%-11s %4s %-8s %-8s %4s %4s %4s %4s %4s %-19s %s" % ( p01, p02, p03, p04, p05, p06, p07, p08, p09, p10, p11 ) )
     return
 
+def print_default_acl( pathDir, mystat ):
+    # If its a directory, it starts with a d.
+    permString = 'd' if stat.S_ISDIR( mystat.st_mode ) else '-'
+
+    # Extract the file mode and convert it to a string representation
+    octalPerms = str( oct( mystat.st_mode )[-4:] )
+    permString += get_permission_string( octalPerms )
+
+    cmd = '/usr/lpp/mmfs/bin/mmgetacl -d ' + '"' + pathDir + '"'
+    output = run_cmd( cmd )
+
+    # If there is an ACL, there will be more output than 3 lines of ACL data.
+    if len( output.split( '\n' ) ) > 3:
+       print( "Default ACL: %s" % ( pathDir ) )
+       print_line( 'Permissions', 'Mode', 'Owner', 'Group', 'USER', 'GRUP', 'GEFF', 'OTHR', 'MASK', 'Modification Time', 'Filename' )
+       myAcl = parse_acl( pathDir, output )
+
+       # If there is an ACL, append a + to the perm string
+       if len( myAcl['USERS'].keys() ) > 0 or len( myAcl['GROUPS'].keys() ) > 0:
+          permString += '+'
+       else:
+          permString += ' '
+
+       # Convert the stat modification time to a readable timestamp
+       timeStamp = datetime.datetime.fromtimestamp( mystat.st_mtime ).strftime( '%Y-%m-%d %H:%M:%S' )
+
+       # Print the main file line
+       print_line( permString, octalPerms, myAcl['OWNER'], myAcl['GROUP'],
+                   myAcl['USERP'], myAcl['GROUPP'], myAcl['GROUPE'], myAcl['OTHERP'],
+                   myAcl['MASK'], timeStamp, pathDir )
+
+       # Process any user based ACLs
+       if len( myAcl['USERS'].keys() ) > 0:
+          for user in sorted( myAcl['USERS'].keys(), key=str.lower ):
+              print_line( '', '', '', '', myAcl['USERS'][user]['PERMS'],
+                          '', '', '', myAcl['USERS'][user]['EFFECTIVE'], user, '' )
+
+       # Process any group based ACLs
+       if len( myAcl['GROUPS'].keys() ) > 0:
+          for group in sorted( myAcl['GROUPS'].keys(), key=str.lower ):
+              print_line( '', '', '', '', '', myAcl['GROUPS'][group]['PERMS'],
+                          '', '', myAcl['GROUPS'][group]['EFFECTIVE'], group, '' )
+
+       # Print a nice separator line
+       print('')
+    else:
+       print( "Default ACL: None Configured" )
+
+def print_acl( pathDir, mystat ):
+    # If its a directory, it starts with a d.
+    permString = 'd' if stat.S_ISDIR( mystat.st_mode ) else '-'
+
+    # Extract the file mode and convert it to a string representation
+    octalPerms = str( oct( mystat.st_mode )[-4:] )
+    permString += get_permission_string( octalPerms )
+
+    cmd = '/usr/lpp/mmfs/bin/mmgetacl ' + '"' + pathDir + '"'
+    output = run_cmd( cmd )
+
+    # If there is an ACL, there will be more output than 3 lines of ACL data.
+    if len( output.split( '\n' ) ) > 3:
+       myAcl = parse_acl( pathDir, output )
+
+       # If there is an ACL, append a + to the perm string
+       if len( myAcl['USERS'].keys() ) > 0 or len( myAcl['GROUPS'].keys() ) > 0:
+          permString += '+'
+       else:
+          permString += ' '
+
+       # Convert the stat modification time to a readable timestamp
+       timeStamp = datetime.datetime.fromtimestamp( mystat.st_mtime ).strftime( '%Y-%m-%d %H:%M:%S' )
+
+       # Print the main file line
+       print_line( permString, octalPerms, myAcl['OWNER'], myAcl['GROUP'],
+                   myAcl['USERP'], myAcl['GROUPP'], myAcl['GROUPE'], myAcl['OTHERP'],
+                   myAcl['MASK'], timeStamp, pathDir )
+
+       # Process any user based ACLs
+       if len( myAcl['USERS'].keys() ) > 0:
+          for user in sorted( myAcl['USERS'].keys(), key=str.lower ):
+              print_line( '', '', '', '', myAcl['USERS'][user]['PERMS'],
+                          '', '', '', myAcl['USERS'][user]['EFFECTIVE'], user, '' )
+
+       # Process any group based ACLs
+       if len( myAcl['GROUPS'].keys() ) > 0:
+          for group in sorted( myAcl['GROUPS'].keys(), key=str.lower ):
+              print_line( '', '', '', '', '', myAcl['GROUPS'][group]['PERMS'],
+                          '', '', myAcl['GROUPS'][group]['EFFECTIVE'], group, '' )
+
 
 if __name__ == '__main__':
    ( options, args ) = parse_options( sys.argv[1:] )
@@ -232,7 +335,46 @@ if __name__ == '__main__':
    # See if any files were listed. If not, default to the current directory
    if len( args ) >= 1:
       for fileName in args:
-          print( fileName )
+          if path.exists( fileName ):
+             pathName = os.path.abspath( fileName )
+
+             # Get the stat information
+             mystat = get_os_stat( pathName )
+             if stat.S_ISDIR( mystat.st_mode ):
+                pathDir = pathName
+             else:
+                pathDir = os.path.dirname( pathName )
+
+             if options.default:
+                print_default_acl( pathDir, mystat )
+
+             # Print the ACL
+             print_line( 'Permissions', 'Mode', 'Owner', 'Group', 'USER', 'GRUP', 'GEFF', 'OTHR', 'MASK', 'Modification Time', 'Filename' )
+             print_acl( pathName, mystat )
+
+             if ( stat.S_ISDIR( mystat.st_mode ) ) and options.recurse:
+                printedHeader = 0
+                for recurseFile in sorted( os.listdir( pathName ), key=str.lower ):
+                    if printedHeader == 0:
+                       printedHeader = 1
+                       print('')
+                       print_line( 'Permissions', 'Mode', 'Owner', 'Group', 'USER', 'GRUP', 'GEFF', 'OTHR', 'MASK', 'Modification Time', 'Filename' )
+
+                    # Lets fully qualify the pathname to the file
+                    pathName = os.path.join( pathDir, recurseFile )
+
+                    # Get the stat information
+                    recurseStat = get_os_stat( pathName )
+
+                    print_acl( pathName, recurseStat )
+
+             print('')
+          else:
+             print("No Path: %s\n" % ( fileName ) )
+
+
+   # No files were passed on the command line, so process the whole directory.
+   #
    else:
       currentDirectory = os.getcwd()
       print( "Directory: %s" % ( currentDirectory ) )
@@ -254,7 +396,7 @@ if __name__ == '__main__':
 
          # If there is an ACL, there will be more output than 3 lines of ACL data.
          if len( output.split( '\n' ) ) > 3:
-            print( "Default ACL:" )
+            print( "Default ACL: %s" % ( currentDirectory ) )
             print_line( 'Permissions', 'Mode', 'Owner', 'Group', 'USER', 'GRUP', 'GEFF', 'OTHR', 'MASK', 'Modification Time', 'Filename' )
             myAcl = parse_acl( currentDirectory, output )
 
