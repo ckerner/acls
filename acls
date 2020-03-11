@@ -239,6 +239,17 @@ def print_line( p01, p02, p03, p04, p05, p06, p07, p08, p09, p10, p11 ):
     print( "%-11s %4s %-8s %-8s %4s %4s %4s %4s %4s %-19s %s" % ( p01, p02, p03, p04, p05, p06, p07, p08, p09, p10, p11 ) )
     return
 
+def has_acl( fqpn ):
+    cmd = '/usr/lpp/mmfs/bin/mmgetacl -d ' + '"' + fqpn + '"'
+    d_acl = run_cmd( cmd )
+    cmd = '/usr/lpp/mmfs/bin/mmgetacl ' + '"' + fqpn + '"'
+    r_acl = run_cmd( cmd )
+
+    if ( len( d_acl.split( '\n' ) ) > 2 ) or ( len( r_acl.split( '\n' ) ) > 5 ):
+       return True
+    else:
+       return False
+
 
 def print_acl( pathDir, mystat, aclType ):
     # If its a directory, it starts with a d.
@@ -261,10 +272,17 @@ def print_acl( pathDir, mystat, aclType ):
        myAcl = parse_acl( pathDir, output )
 
        # If there is an ACL, append a + to the perm string
-       if len( myAcl['USERS'].keys() ) > 0 or len( myAcl['GROUPS'].keys() ) > 0:
-          permString += '+'
+       #if len( myAcl['USERS'].keys() ) > 0 or len( myAcl['GROUPS'].keys() ) > 0:
+       if stat.S_ISDIR( mystat.st_mode ): 
+          if has_acl( pathDir ):
+             permString += '+'
+          else:
+             permString += ' '
        else:
-          permString += ' '
+          if len( myAcl['USERS'].keys() ) > 0 or len( myAcl['GROUPS'].keys() ) > 0:
+             permString += '+'
+          else:
+             permString += ' '
 
        # Convert the stat modification time to a readable timestamp
        timeStamp = datetime.datetime.fromtimestamp( mystat.st_mtime ).strftime( '%Y-%m-%d %H:%M:%S' )
