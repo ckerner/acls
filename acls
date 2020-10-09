@@ -112,6 +112,12 @@ def parse_options( argv ):
                          action = 'store_true',
                          help = "Recurse down one level if a directory is specified. Default: %(default)s")
 
+    parser.add_argument( "-l", "--long",
+                         dest = "long",
+                         default = False,
+                         action = 'store_true',
+                         help = "Print the fully qualified filename for each file. Default: %(default)s")
+
     parser.add_argument( "-v", "--verbose",
                          dest = "verbose",
                          default = False,
@@ -288,9 +294,14 @@ def print_acl( pathDir, mystat, aclType ):
        timeStamp = datetime.datetime.fromtimestamp( mystat.st_mtime ).strftime( '%Y-%m-%d %H:%M:%S' )
 
        # Print the main file line
-       print_line( permString, octalPerms, myAcl['OWNER'], myAcl['GROUP'],
-                   myAcl['USERP'], myAcl['GROUPP'], myAcl['GROUPE'], myAcl['OTHERP'],
-                   myAcl['MASK'], timeStamp, pathDir )
+       if options.long:
+          print_line( permString, octalPerms, myAcl['OWNER'], myAcl['GROUP'],
+                      myAcl['USERP'], myAcl['GROUPP'], myAcl['GROUPE'], myAcl['OTHERP'],
+                      myAcl['MASK'], timeStamp, pathDir )
+       else:
+          print_line( permString, octalPerms, myAcl['OWNER'], myAcl['GROUP'],
+                      myAcl['USERP'], myAcl['GROUPP'], myAcl['GROUPE'], myAcl['OTHERP'],
+                      myAcl['MASK'], timeStamp, os.path.basename( pathDir ) )
 
        # Process any user based ACLs
        if len( myAcl['USERS'].keys() ) > 0:
